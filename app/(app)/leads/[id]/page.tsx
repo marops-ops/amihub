@@ -1,6 +1,8 @@
 import { createServerSupabase } from "@/lib/supabase-server";
+import { getCurrentUserProfile } from "@/lib/current-user";
 import { notFound } from "next/navigation";
 import LeadActions from "./LeadActions";
+import ReassignBox from "./ReassignBox";
 
 const STATUS_LABEL: Record<string, string> = {
   nye: "Nye",
@@ -35,6 +37,18 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
     .select("*, users(full_name)")
     .eq("lead_id", id)
     .order("created_at", { ascending: false });
+
+  const profile = await getCurrentUserProfile();
+  let sellers: { id: string; full_name: string }[] = [];
+  if (profile && ["admin", "salgsleder"].includes(profile.role) && lead.location_id) {
+    const { data: userLocations } = await supabase
+      .from("user_locations")
+      .select("users(id, full_name, role)")
+      .eq("location_id", lead.location_id);
+    sellers = (userLocations ?? [])
+      .map((ul: any) => ul.users)
+      .filter((u: any) => u && u.role === "selger");
+  }
 
   return (
     <div style={{ display: "flex", gap: 32 }}>
@@ -71,6 +85,10 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
           subStatus={lead.sub_status}
           productCategory={lead.product_category}
         />
+
+        {profile && ["admin", "salgsleder"].includes(profile.role) && (
+          <ReassignBox leadId={lead.id} sellers={sellers} />
+        )}
 
         <h3 style={{ marginTop: 32 }}>Notater</h3>
         <ul style={{ listStyle: "none", padding: 0 }}>

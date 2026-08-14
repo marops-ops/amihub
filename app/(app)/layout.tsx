@@ -24,6 +24,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <a href="/leads" style={navLinkStyle}>
             Leads
           </a>
+          <a href="/leads/gamle" style={navLinkStyle}>
+            Gamle leads
+          </a>
         </nav>
         <div style={{ marginTop: 48, fontSize: 13, color: "#666" }}>
           <div>{profile.full_name}</div>
