@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase-admin";
-import { classifyLead, Vertical } from "@/lib/classify";
 import {
   normalizeRohneSelmerWebsiteForm,
   normalizeManualLead,
@@ -32,12 +31,16 @@ export async function POST(req: NextRequest) {
   // 1. Resolve organization
   const { data: org, error: orgError } = await supabase
     .from("organizations")
-    .select("id, vertical, classification_config")
+    .select("id, vertical")
     .eq("slug", organization_slug)
     .single();
 
   if (orgError || !org) {
-    return NextResponse.json({ error: "Unknown organization" }, { status: 404 });
+    console.error("Organization lookup failed:", { organization_slug, orgError });
+    return NextResponse.json(
+      { error: "Unknown organization", debug: orgError?.message ?? null },
+      { status: 404 }
+    );
   }
 
   // 2. Normalize payload -> canonical shape
@@ -53,7 +56,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: `Unsupported source: ${source}` }, { status: 400 });
   }
 
-  // 3. Resolve location by name within the org (routing key)
+  // 3. Resolve location by name within the org (routing key — determines
+  // which sellers get notified and who can see/accept this lead)
   let locationId: string | null = null;
   if (normalized.location_name) {
     const { data: location } = await supabase
@@ -65,19 +69,8 @@ export async function POST(req: NextRequest) {
     locationId = location?.id ?? null;
   }
 
-  // 4. Classify (AI suggestion — always overridable downstream)
-  const productContext = [normalized.product_category, normalized.product_name, normalized.product_variant]
-    .filter(Boolean)
-    .join(" ");
-
-  const classification = await classifyLead({
-    message: normalized.message,
-    vertical: org.vertical as Vertical,
-    productContext: productContext || null,
-    orgHints: (org.classification_config as any)?.hints ?? null,
-  });
-
-  // 5. Insert lead
+  // 4. Insert lead — status always starts at 'nye'. Contact-SLA clock
+  // (4 hours) starts implicitly from created_at, no separate field needed.
   const { data: lead, error: insertError } = await supabase
     .from("leads")
     .insert({
@@ -97,9 +90,7 @@ export async function POST(req: NextRequest) {
       raw_payload: normalized.raw_payload,
       marketing_consent: normalized.marketing_consent,
       marketing_consent_at: normalized.marketing_consent ? new Date().toISOString() : null,
-      queue: classification.queue,
-      temperature: classification.temperature,
-      ai_classification: classification,
+      status: "nye",
     })
     .select()
     .single();
@@ -112,23 +103,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: insertError.message }, { status: 500 });
   }
 
-  // 6. Log creation + classification activity
-  await supabase.from("lead_activities").insert([
-    {
-      lead_id: lead.id,
-      user_id: null,
-      activity_type: "created",
-      new_value: { source_channel: normalized.source_channel },
-    },
-    {
-      lead_id: lead.id,
-      user_id: null,
-      activity_type: "classified",
-      new_value: classification,
-    },
-  ]);
+  // 5. Log creation
+  await supabase.from("lead_activities").insert({
+    lead_id: lead.id,
+    user_id: null,
+    activity_type: "created",
+    new_value: { source_channel: normalized.source_channel },
+  });
 
-  // 7. Mirror into marketing_contacts if consent given
+  // 6. Mirror into marketing_contacts if consent given
   if (normalized.marketing_consent) {
     await supabase.from("marketing_contacts").insert({
       organization_id: org.id,
@@ -141,5 +124,8 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  return NextResponse.json({ status: "ok", lead_id: lead.id, classification });
+  // TODO (email varsel): send e-post til alle selgere på locationId når
+  // e-post-tjeneste (Resend) er koblet på — brief krever dette ved nye leads.
+
+  return NextResponse.json({ status: "ok", lead_id: lead.id });
 }
