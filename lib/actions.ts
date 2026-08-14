@@ -59,27 +59,6 @@ export async function acceptLead(leadId: string) {
   return { success: true };
 }
 
-const IKKE_AKTUELT_REASONS = [
-  "Ingen kontakt",
-  "Feil kontaktinformasjon",
-  "Konkurrent",
-  "Ikke finansiering",
-  "Kun informasjon",
-  "Annet",
-] as const;
-
-const KUNDE_AVSLATT_REASONS = [
-  "Pris",
-  "Leveringstid",
-  "Valgte annet merke",
-  "Finansiering",
-  "Ombestemte seg",
-  "Ingen respons",
-  "Annet",
-] as const;
-
-export { IKKE_AKTUELT_REASONS, KUNDE_AVSLATT_REASONS };
-
 export async function setIkkeAktuelt(leadId: string, reason: string) {
   const supabase = await createServerSupabase();
   const user = await getUser(supabase);

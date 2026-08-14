@@ -13,9 +13,8 @@ import {
   markLevert,
   registrerOppfolgingssamtale,
   addNote,
-  IKKE_AKTUELT_REASONS,
-  KUNDE_AVSLATT_REASONS,
 } from "@/lib/actions";
+import { IKKE_AKTUELT_REASONS, KUNDE_AVSLATT_REASONS } from "@/lib/reasons";
 
 const BRAND_HINTS: Record<string, string> = {
   Ford: "Husk å booke kunden inn i TDS på riktig modell.",

@@ -2,6 +2,10 @@
 -- Drops the AI-classification / helpdesk model, replaces with the client's
 -- explicit seller-driven pipeline.
 
+-- ---- Drop old policies first (they reference columns we're about to drop) ----
+drop policy if exists leads_select on leads;
+drop policy if exists leads_update on leads;
+
 -- ---- Remove fields from the dropped AI-classification model ----
 alter table leads
   drop column if exists queue,
@@ -14,6 +18,16 @@ alter table leads
 
 -- ---- New pipeline status ----
 alter table leads drop constraint if exists leads_status_check;
+
+-- Map old status values (unassigned/claimed/won/lost) to the new pipeline
+update leads set status = case status
+  when 'unassigned' then 'nye'
+  when 'claimed' then 'under_arbeid'
+  when 'won' then 'vunnet'
+  when 'lost' then 'tapt'
+  else status
+end;
+
 alter table leads alter column status set default 'nye';
 alter table leads add constraint leads_status_check
   check (status in ('nye','under_arbeid','oppfolging','vunnet','levert','ferdig','tapt'));
@@ -33,8 +47,8 @@ alter table leads
   add column old_flag_notified boolean not null default false,
   add column handling_breach_notified boolean not null default false;
 
-create index leads_status_idx on leads (organization_id, status);
-create index leads_last_activity_idx on leads (organization_id, last_activity_at);
+create index if not exists leads_status_idx on leads (organization_id, status);
+create index if not exists leads_last_activity_idx on leads (organization_id, last_activity_at);
 
 -- ---- Roles: drop helpdesk, use selger/salgsleder/admin ----
 alter table users drop constraint if exists users_role_check;
@@ -42,27 +56,36 @@ alter table users add constraint users_role_check
   check (role in ('selger','salgsleder','admin'));
 
 -- ---- lead_activities: expand event types for the new pipeline ----
+-- Includes legacy values from the dropped AI-classification model so
+-- existing historical rows remain valid without rewriting their meaning.
 alter table lead_activities drop constraint if exists lead_activities_activity_type_check;
 alter table lead_activities add constraint lead_activities_activity_type_check
   check (activity_type in (
+    -- new pipeline event types
     'created','accepted','status_changed','sub_status_changed',
     'reassigned','reminder_sent','delivery_date_set','delivery_confirmed',
-    'follow_up_call_registered','sla_breach','old_lead_flagged'
+    'follow_up_call_registered','sla_breach','old_lead_flagged',
+    -- legacy event types (dropped model, kept for historical rows only)
+    'classified','queue_changed','temperature_changed','claimed',
+    'note_added','contact_logged','qualification_changed','follow_up_set'
   ));
 
 -- ---- lead_notes: separate from the immutable system activity log.
 -- These are freeform, user-authored, timestamped and attributed, per brief.
-create table lead_notes (
+create table if not exists lead_notes (
   id uuid primary key default gen_random_uuid(),
   lead_id uuid not null references leads(id) on delete cascade,
-  user_id uuid not null references users(id) on delete set null,
+  user_id uuid references users(id) on delete set null,
   note text not null,
   created_at timestamptz not null default now()
 );
 
-create index lead_notes_lead_idx on lead_notes (lead_id, created_at);
+create index if not exists lead_notes_lead_idx on lead_notes (lead_id, created_at);
 
 alter table lead_notes enable row level security;
+
+drop policy if exists lead_notes_isolation on lead_notes;
+drop policy if exists lead_notes_insert on lead_notes;
 
 create policy lead_notes_isolation on lead_notes
   for select using (
